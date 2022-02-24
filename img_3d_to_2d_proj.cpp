@@ -132,10 +132,10 @@ void DepthToImageProjection::OnCameraMsg(const sensor_msgs::msg::Image::SharedPt
 	}
 	if (this->objects_dists.size() > 0)
 	{
-		RCLCPP_INFO(this->get_logger(),  "\n Shortest dist pixel: \n x_px: %f, \n y_px: %f", x_px_vec.at(this->closest_idx), y_px_vec.at(this->closest_idx));
+		//RCLCPP_INFO(this->get_logger(),  "\n Shortest dist pixel: \n x_px: %f, \n y_px: %f", x_px_vec.at(this->closest_idx), y_px_vec.at(this->closest_idx));
 	}
 	else {
-		RCLCPP_INFO(this->get_logger(),  "\n No points in pointcloud");
+		//RCLCPP_INFO(this->get_logger(),  "\n No points in pointcloud");
 
 	}
 	

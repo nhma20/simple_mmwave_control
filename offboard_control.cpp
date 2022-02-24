@@ -48,7 +48,7 @@
 #include <px4_msgs/msg/timesync.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_control_mode.hpp>
-#include <px4_msgs/msg/debug_vect.hpp>
+#include <px4_msgs/msg/vehicle_status.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <stdint.h>
 #include <thread>
@@ -80,6 +80,17 @@ public:
 			this->create_publisher<VehicleCommand>("fmu/vehicle_command/in");
 #endif
 		
+		// check nav_state if in offboard (14)
+		// VehicleStatus: https://github.com/PX4/px4_msgs/blob/master/msg/VehicleStatus.msg
+		vehicle_status_sub_ = create_subscription<px4_msgs::msg::VehicleStatus>(
+			"/fmu/vehicle_status/out",
+			10,
+			[this](px4_msgs::msg::VehicleStatus::ConstSharedPtr msg) {
+			arming_state_ = msg->arming_state;
+			nav_state_ = msg->nav_state;
+			});
+
+
 		// get common timestamp
 		timesync_sub_ = this->create_subscription<px4_msgs::msg::Timesync>("/fmu/timesync/out",
 		10,
@@ -87,39 +98,89 @@ public:
 			timestamp_.store(msg->timestamp);
 		});
 
+
+		// Get velocity vector values
+		// TrajectorySetpoint: https://github.com/PX4/px4_msgs/blob/ros2/msg/TrajectorySetpoint.msg
+		vel_ctrl_subscription_ = this->create_subscription<px4_msgs::msg::TrajectorySetpoint>(
+			"vel_ctrl_vect_topic",	10,
+			[this](const px4_msgs::msg::TrajectorySetpoint::UniquePtr msg) {
+					x_ = msg->x;
+					y_ = msg->y;
+					z_ = msg->z;
+					yaw_ = msg->yaw;
+					yawspeed_ = msg->yawspeed;
+					vx_ = msg->vx;
+					vy_ = msg->vy;
+					vz_ = msg->vz;
+				});
+
+
 		auto control_callback = [this]() -> void {
-			if (OffboardControl::hasReceivedLaserScanMsgs == true && OffboardControl::armed == false) {
-				RCLCPP_INFO(this->get_logger(),  "Control messages received, attempting takeoff..");
+
+			// If drone not armed (from external controller), do nothing
+			/*if (nav_state_ != 14) {
+				RCLCPP_INFO(this->get_logger(), "Not in offboard mode");
+				return;
+			}*/
+
+			if (offboard_setpoint_counter_ == 1) { // 5s sleep before starting offboard
+			RCLCPP_INFO(this->get_logger(), "Offboard mode detected");
+				RCLCPP_INFO(this->get_logger(), "Waiting 5 seconds before arming");
+				std::chrono::nanoseconds sleepperiod(5000000000); 
+				rclcpp::GenericRate<std::chrono::high_resolution_clock> rate(sleepperiod);
+				rate.sleep();  
+			}
+
+
+			if (offboard_setpoint_counter_ == 10) {
 				// Change to Offboard mode after 10 setpoints
 				this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
-				// Arm the vehicle
 				this->arm();
+				RCLCPP_INFO(this->get_logger(), "Takeoff and hover");
 			}
-            		// offboard_control_mode needs to be paired with trajectory_setpoint
-			publish_offboard_control_mode();
-			publish_trajectory_setpoint(NAN,NAN,NAN,NAN,NAN, OffboardControl::xv , OffboardControl::yv, OffboardControl::zv);
 
-			// detect if no messages are received when drone is armed, land if true
-			if(armed == true){
-				if (sensorMsgsCallbacks == sensorMsgsCallbacksPrev) {
-					sensorMsgsCallbacksSamePrev++;
-				} else {
-					sensorMsgsCallbacksSamePrev = 0;
+
+			// Offboard_control_mode needs to be paired with trajectory_setpoint
+			if (offboard_setpoint_counter_ < hover_count_) 
+			{
+				publish_offboard_control_mode();
+				publish_hover_setpoint();
+			} 
+			else if (offboard_setpoint_counter_ < yaw_count_)
+			{
+				if (offboard_setpoint_counter_ == hover_count_)
+				{
+					RCLCPP_INFO(this->get_logger(), "Aligning yaw with cables (approximate)");
 				}
-				
-				if(sensorMsgsCallbacksSamePrev == 10){
-					RCLCPP_INFO(this->get_logger(),  "Connection to control publisher lost, landing..");
-					publish_vehicle_command(VehicleCommand::VEHICLE_CMD_NAV_LAND); 
-				}
-				sensorMsgsCallbacksPrev = sensorMsgsCallbacks;
+				publish_offboard_control_mode();
+				publish_yaw_setpoint();
 			}
+			else if (offboard_setpoint_counter_ < tracking_count_)
+			{
+				if (offboard_setpoint_counter_ == yaw_count_)
+				{
+					RCLCPP_INFO(this->get_logger(), "Attempting to reach cable");
+				}
+				publish_offboard_control_mode();
+				publish_trajectory_setpoint();
+			} 
+			else 
+			{
+				if (offboard_setpoint_counter_ == tracking_count_)
+				{
+					RCLCPP_INFO(this->get_logger(), "Landing at current position");
+					this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_NAV_LAND);
+				}
+			}
+
+
+			offboard_setpoint_counter_++;
+
 		};
+
+
 		timer_ = this->create_wall_timer(50ms, control_callback);
 
-
-		subscription_ = this->create_subscription<px4_msgs::msg::DebugVect>(
-			"vel_ctrl_vect_topic",	10,
-			std::bind(&OffboardControl::OnVelVect, this, std::placeholders::_1));
 	}
 	
 	~OffboardControl() {
@@ -134,20 +195,30 @@ public:
 
 private:
 	rclcpp::TimerBase::SharedPtr timer_;
-	rclcpp::Subscription<px4_msgs::msg::DebugVect>::SharedPtr subscription_;
+	rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status_sub_;
+	rclcpp::Subscription<px4_msgs::msg::TrajectorySetpoint>::SharedPtr vel_ctrl_subscription_;
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
 	rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 	rclcpp::Subscription<px4_msgs::msg::Timesync>::SharedPtr timesync_sub_;
 
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
+	uint8_t arming_state_; // armed = 4
+	uint8_t nav_state_; // offboard = 14
+	uint64_t offboard_setpoint_counter_ = 0;   //!< counter for the number of setpoints sent
+	uint64_t hover_count_ = 200;	// 10s at 20Hz
+	uint64_t yaw_count_ = 300; // 5s at 20Hz
+	uint64_t tracking_count_ = 900; // 15s at 20Hz (tracking_count_ - yaw_count_ = tracking time)
+	float hover_height_ = 1.5;
 	bool armed = false;
-	float xv = NAN, yv = NAN, zv = NAN;
-	bool hasReceivedLaserScanMsgs = false;
-	int sensorMsgsCallbacks = 0, sensorMsgsCallbacksPrev = 0, sensorMsgsCallbacksSamePrev = 0;
-	void OnVelVect(const px4_msgs::msg::DebugVect::UniquePtr msg);
+	float x_ = 0, y_ = 0, z_ = 0;
+	float yaw_ = 0, yawspeed_ = 0;
+	float vx_ = 0, vy_ = 0, vz_ = 0;
+
 	void publish_offboard_control_mode() const;
-	void publish_trajectory_setpoint(float x, float y, float z, float yaw, float yawspeed, float vx, float vy, float vz) const;
+	void publish_hover_setpoint() const;
+	void publish_yaw_setpoint() const;
+	void publish_trajectory_setpoint() const;
 	void publish_vehicle_command(uint16_t command, float param1 = 0.0,
 				     float param2 = 0.0,
 				     float param3 = 0.0,
@@ -159,21 +230,6 @@ private:
 
 
 /**
- * @brief Control drone velocity based on ROS2 advertiser
- */
-void OffboardControl::OnVelVect(const px4_msgs::msg::DebugVect::UniquePtr msg) {
-	OffboardControl::xv = msg->x;
-	OffboardControl::yv = msg->y;
-	OffboardControl::zv = msg->z;
-	OffboardControl::hasReceivedLaserScanMsgs = true;
-	if(OffboardControl::sensorMsgsCallbacks < INT_MAX){
-		OffboardControl::sensorMsgsCallbacks++;
-	} else {
-		OffboardControl::sensorMsgsCallbacks = 0;
-	}
-}
-
-/**
  * @brief Send a command to Arm the vehicle
  */
 void OffboardControl::arm() {
@@ -181,6 +237,7 @@ void OffboardControl::arm() {
 	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
 	RCLCPP_INFO(this->get_logger(), "Arm command send");
 }
+
 
 /**
  * @brief Send a command to Disarm the vehicle
@@ -190,6 +247,7 @@ void OffboardControl::disarm() {
 	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0);
 	RCLCPP_INFO(this->get_logger(), "Disarm command send");
 }
+
 
 /**
  * @brief Publish the offboard control mode.
@@ -210,25 +268,57 @@ void OffboardControl::publish_offboard_control_mode() const {
 
 /**
  * @brief Publish a trajectory setpoint
+ *        Vehicle hovers at hover_height_ meters.
  */
-void OffboardControl::publish_trajectory_setpoint(float x, float y, float z, float yaw, float yawspeed, float vx, float vy, float vz) const {
+void OffboardControl::publish_hover_setpoint() const {
+
 	TrajectorySetpoint msg{};
 	msg.timestamp = timestamp_.load();
-	msg.x = x; 		// in meters NED
-	msg.y = y; 		// in meters NED
-	msg.z = z; 		// in meters NED
-	msg.yaw = yaw; 	// in radians NED -PI..+PI
-	msg.yawspeed = yawspeed; 	// in radians/sec
-	msg.vx = vx; 		// in meters/sec
-	msg.vy = vy; 		// in meters/sec
-	msg.vz = vz; 	// in meters/sec
-	RCLCPP_INFO(this->get_logger(),  "\n Velocity vector: \n vx: %f, vy: %f, vz: %f'", vx, vy, vz);
+	msg.x = NAN; 		// in meters NED
+	msg.y = NAN;
+	msg.z = -hover_height_;
+	msg.yaw = NAN; 
+	trajectory_setpoint_publisher_->publish(msg);
+}
+
+
+/**
+ * @brief Publish a trajectory setpoint
+ *        Vehicle yaw with north (approximate).
+ */
+void OffboardControl::publish_yaw_setpoint() const {
+
+	TrajectorySetpoint msg{};
+	msg.timestamp = timestamp_.load();
+	msg.x = NAN; 		// in meters NED
+	msg.y = NAN;
+	msg.z = -hover_height_;
+	msg.yaw = -1.15;
+	trajectory_setpoint_publisher_->publish(msg);
+}
+
+
+/**
+ * @brief Publish a trajectory setpoint
+ */
+void OffboardControl::publish_trajectory_setpoint() const {
+
+	TrajectorySetpoint msg{};
+	msg.timestamp = timestamp_.load();
+	msg.x = NAN; 		// in meters NED
+	msg.y = NAN; 		// in meters NED
+	msg.z = NAN; 		// in meters NED
+	msg.yaw = NAN; 		// in radians NED -PI..+PI
+	msg.yawspeed = 0.0; // in radians/sec
+	msg.vx = vx_; 		// in meters/sec
+	msg.vy = vy_; 		// in meters/sec
+	msg.vz = vz_; 		// in meters/sec
+	RCLCPP_INFO(this->get_logger(),  "\n Velocity vector: \n vx: %f, vy: %f, vz: %f'", vx_, vy_, vz_);
 	//msg.acceleration	// in meters/sec^2
-	//msg.jerk		// in meters/sec^3
+	//msg.jerk			// in meters/sec^3
 	//msg.thrust		// normalized thrust vector in NED
 
 	trajectory_setpoint_publisher_->publish(msg);
-
 }
 
 
@@ -260,6 +350,7 @@ void OffboardControl::publish_vehicle_command(uint16_t command, float param1,
 
 	vehicle_command_publisher_->publish(msg);
 }
+
 
 int main(int argc, char* argv[]) {
 	std::cout << "Starting offboard control node..." << std::endl;
