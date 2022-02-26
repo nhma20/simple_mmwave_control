@@ -79,7 +79,9 @@ class VelocityControlVectorAdvertiser : public rclcpp::Node
 		int callback_count = 0;
 		float yaw_ = 0;
 		float yaw_deg_ = 0;
-	
+		float yaw_offset_ = 45; // -45
+		float cable_dist_ = 1.0;
+
 		void OnDepthMsg(const sensor_msgs::msg::PointCloud2::SharedPtr _msg);
 		void VelocityDroneControl(float xv, float yv, float zv);
 		float constrain(float val, float lo_lim, float hi_lim);
@@ -94,10 +96,10 @@ void VelocityControlVectorAdvertiser::VelocityDroneControl(float xv, float yv, f
 	float vz_NED = 0.0;
 
 	// translate x and y velocities from local drone frame to global NED frame
-	vx_NED += cos(yaw_deg_*(PI/180.0)) * xv;
-	vy_NED += sin(yaw_deg_*(PI/180.0)) * xv;
-	vx_NED += -sin(yaw_deg_*(PI/180.0)) * yv;
-	vy_NED += cos(yaw_deg_*(PI/180.0)) * yv;
+	vx_NED += cos((yaw_deg_+yaw_offset_)*(PI/180.0)) * xv;
+	vy_NED += sin((yaw_deg_+yaw_offset_)*(PI/180.0)) * xv;
+	vx_NED += -sin((yaw_deg_+yaw_offset_)*(PI/180.0)) * yv;
+	vy_NED += cos((yaw_deg_+yaw_offset_)*(PI/180.0)) * yv;
 	vz_NED += - zv;
 
 	auto vel_ctrl_vect = px4_msgs::msg::TrajectorySetpoint();
@@ -177,7 +179,7 @@ void VelocityControlVectorAdvertiser::OnDepthMsg(const sensor_msgs::msg::PointCl
 
 
 		// Simple average filtering
-		z_filter_q.push_back(closest_dist);
+		/*z_filter_q.push_back(closest_dist);
 		yz_filter_q.push_back(shortest_dist_angle_yz);
 		xz_filter_q.push_back(shortest_dist_angle_xz);
 
@@ -203,7 +205,7 @@ void VelocityControlVectorAdvertiser::OnDepthMsg(const sensor_msgs::msg::PointCl
 		shortest_dist = z_avg;
 
 		RCLCPP_INFO(this->get_logger(),  "Filter size: %d", z_filter_q.size());
-		RCLCPP_INFO(this->get_logger(),  "Averages: %f, %f, %f", z_avg, yz_avg, xz_avg);
+		RCLCPP_INFO(this->get_logger(),  "Averages: %f, %f, %f", z_avg, yz_avg, xz_avg);*/
 
 
 
@@ -213,7 +215,7 @@ void VelocityControlVectorAdvertiser::OnDepthMsg(const sensor_msgs::msg::PointCl
 		RCLCPP_INFO(this->get_logger(),  "\n No points in pointcloud");
 	}
 
-	float control_distance = 0.5;	// desired distance to cable (meters)
+	float control_distance = cable_dist_;	// desired distance to cable (meters)
 	float control_angle = 0.0; 		// desired angle to cable (rad)
 	float kp_dist = 0.5; 			// proportional gain for distance controller - nonoise 1.5
 	float kp_angle = 5.0; 			// proportional gain for angle controller - nonoise 5.0

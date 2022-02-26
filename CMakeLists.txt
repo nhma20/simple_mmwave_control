@@ -35,6 +35,8 @@ endif()
 
 set(USES_DEPRECATED_EXPORT_API "ardent" "bouncy" "crystal" "dashing" "eloquent")
 
+set(OpenCV_DIR "/usr/lib/x86_64-linux-gnu/cmake/opencv4")
+
 find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(fastcdr REQUIRED)
@@ -47,7 +49,9 @@ find_package(px4_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-#find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(iii_interfaces REQUIRED)
 
 find_package(PythonInterp 3 REQUIRED)
 if(ROS_DISTRO IN_LIST ROS_DISTROS)
@@ -76,7 +80,9 @@ function(custom_executable subfolder target)
     px4_msgs
     sensor_msgs
     std_msgs
-    #OpenCV
+    OpenCV
+    cv_bridge
+    iii_interfaces
   )
   install(TARGETS ${target}
   DESTINATION lib/${PROJECT_NAME})
@@ -105,6 +111,7 @@ custom_executable(examples/offboard offboard_control)
 custom_executable(examples/offboard vel_ctrl_vec_pub)
 custom_executable(examples/offboard img_3d_to_2d_proj)
 custom_executable(examples/offboard lidar_to_mmwave)
+custom_executable(examples/offboard hough_pub)
 
 ############
 # Install ##
@@ -112,7 +119,7 @@ custom_executable(examples/offboard lidar_to_mmwave)
 
 # Export information to downstream packages
 if(ROS_DISTRO IN_LIST ROS_DISTROS)
-  ament_export_dependencies(ament_cmake rclcpp rosidl_default_runtime eigen3_cmake_module Eigen3 px4_msgs geometry_msgs sensor_msgs)
+  ament_export_dependencies(ament_cmake rclcpp rosidl_default_runtime eigen3_cmake_module Eigen3 px4_msgs geometry_msgs sensor_msgs OpenCV)
 else()
   ament_export_dependencies(ament_cmake rclcpp rosidl_default_runtime Eigen3 px4_msgs geometry_msgs sensor_msgs)
 endif()

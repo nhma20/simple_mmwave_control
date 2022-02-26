@@ -119,7 +119,8 @@ public:
 
 			// If drone not armed (from external controller), do nothing
 			/*if (nav_state_ != 14) {
-				RCLCPP_INFO(this->get_logger(), "Not in offboard mode");
+				RCLCPP_INFO(this->get_logger(), "nav_state: %d", nav_state_);
+				RCLCPP_INFO(this->get_logger(), "Waiting for offboard mode");
 				return;
 			}*/
 
@@ -209,7 +210,10 @@ private:
 	uint64_t hover_count_ = 200;	// 10s at 20Hz
 	uint64_t yaw_count_ = 300; // 5s at 20Hz
 	uint64_t tracking_count_ = 900; // 15s at 20Hz (tracking_count_ - yaw_count_ = tracking time)
+
 	float hover_height_ = 1.5;
+	float yaw_align_ = -2.0; // -1.15   -0.9
+
 	bool armed = false;
 	float x_ = 0, y_ = 0, z_ = 0;
 	float yaw_ = 0, yawspeed_ = 0;
@@ -293,7 +297,7 @@ void OffboardControl::publish_yaw_setpoint() const {
 	msg.x = NAN; 		// in meters NED
 	msg.y = NAN;
 	msg.z = -hover_height_;
-	msg.yaw = -1.15;
+	msg.yaw = yaw_align_;
 	trajectory_setpoint_publisher_->publish(msg);
 }
 

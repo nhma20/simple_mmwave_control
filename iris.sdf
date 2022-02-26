@@ -55,8 +55,9 @@
       
 <!-- SENSOR SECTION STARTS HERE --> 
       <!-- 2D Lidar --> 
-      <sensor name="sensor_ray" type="ray">
-        <pose>0 0 0.05 0 -1.571 0</pose>
+      <sensor name="sensor_ray" type="gpu_ray">
+        <pose>0 0 0.05 0 -1.571 -0.785</pose>
+        <!--pose>0 0 0.05 0 -0.785 0</pose-->
         <ray>
           <scan>
             <horizontal>
@@ -85,7 +86,7 @@
       
       <!-- 2D Camera --> 
         <sensor type="camera" name="cable_camera">
-          <pose>0 0 0.05 0 -1.571 0</pose>
+          <pose>0 0 0.05 0 -1.571 -0.785</pose>
           <!-- Set always_on only sensor, not on plugin -->
           <always_on>1</always_on>
           <!-- Set update_rate only sensor, not on plugin -->
